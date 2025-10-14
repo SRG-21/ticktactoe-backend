@@ -1,0 +1,110 @@
+version: '3.8'
+
+services:
+  # Redis - Game state and pub/sub
+  redis:
+    image: redis:7-alpine
+    container_name: tictactoe-redis
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+
+  # Go WebSocket Server
+  go-sockets:
+    build:
+      context: ../go-sockets
+      dockerfile: Dockerfile
+    container_name: tictactoe-go-sockets
+    environment:
+      - PORT=8080
+      - REDIS_URL=redis://redis:6379
+      - NODE_API_URL=http://node-api:3000
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:3000}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+
+  # Node.js REST API
+  node-api:
+    build:
+      context: ../node-api
+      dockerfile: Dockerfile
+    container_name: tictactoe-node-api
+    environment:
+      - PORT=3000
+      - NODE_ENV=${NODE_ENV:-production}
+      - REDIS_URL=redis://redis:6379
+      - MONGO_URL=${MONGO_URL}
+      - MONGO_DB_NAME=tictactoe
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+
+  # nginx Reverse Proxy
+  nginx:
+    image: nginx:stable-alpine
+    container_name: tictactoe-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certbot/conf:/etc/letsencrypt:ro
+      - ./certbot/www:/var/www/certbot:ro
+    depends_on:
+      - go-sockets
+      - node-api
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+
+  # Certbot for TLS certificates
+  certbot:
+    image: certbot/certbot
+    container_name: tictactoe-certbot
+    volumes:
+      - ./certbot/conf:/etc/letsencrypt
+      - ./certbot/www:/var/www/certbot
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+    networks:
+      - backend
+
+volumes:
+  redis-data:
+    driver: local
+
+networks:
+  backend:
+    driver: bridge

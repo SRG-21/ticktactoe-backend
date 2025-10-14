@@ -1,0 +1,103 @@
+version: '3.8'
+
+services:
+  # Redis only for local development
+  redis:
+    image: redis:7-alpine
+    container_name: tictactoe-redis-dev
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-dev-data:/data
+    networks:
+      - backend-dev
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+  # MongoDB for local development (optional - can use Atlas)
+  mongo:
+    image: mongo:6.0
+    container_name: tictactoe-mongo-dev
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-dev-data:/data/db
+    networks:
+      - backend-dev
+    environment:
+      - MONGO_INITDB_DATABASE=tictactoe
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # Go WebSocket Server
+  go-sockets:
+    build:
+      context: ../go-sockets
+      dockerfile: Dockerfile
+    container_name: tictactoe-go-sockets-dev
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - REDIS_URL=redis://redis:6379
+      - NODE_API_URL=http://node-api:3000
+      - ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173
+      - ENVIRONMENT=development
+    depends_on:
+      redis:
+        condition: service_healthy
+      node-api:
+        condition: service_started
+    networks:
+      - backend-dev
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  # Node.js REST API
+  node-api:
+    build:
+      context: ../node-api
+      dockerfile: Dockerfile
+    container_name: tictactoe-node-api-dev
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - NODE_ENV=development
+      - REDIS_URL=redis://redis:6379
+      - MONGO_URL=mongodb://mongo:27017/tictactoe
+      - MONGO_DB_NAME=tictactoe
+    depends_on:
+      redis:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+    networks:
+      - backend-dev
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  redis-dev-data:
+  mongo-dev-data:
+
+networks:
+  backend-dev:
+    driver: bridge
