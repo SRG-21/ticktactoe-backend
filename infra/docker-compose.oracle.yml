@@ -1,0 +1,131 @@
+version: '3.8'
+
+# Oracle Cloud Deployment - Optimized for VM.Standard.E2.1.Micro (1GB RAM)
+# Uses MongoDB Atlas (external) - no local MongoDB
+
+services:
+  # Redis - Game state and pub/sub
+  redis:
+    image: redis:7-alpine
+    container_name: tictactoe-redis
+    command: redis-server --appendonly yes --maxmemory 100mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+        reservations:
+          memory: 64M
+
+  # Go WebSocket Server
+  go-sockets:
+    build:
+      context: ../go-sockets
+      dockerfile: Dockerfile
+    container_name: tictactoe-go-sockets
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - REDIS_URL=redis://redis:6379
+      - NODE_API_URL=http://node-api:3000
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-*}
+      - ENVIRONMENT=production
+      - GOMAXPROCS=1
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+        reservations:
+          memory: 64M
+
+  # Node.js REST API
+  node-api:
+    build:
+      context: ../node-api
+      dockerfile: Dockerfile
+    container_name: tictactoe-node-api
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis:6379
+      - MONGO_URL=${MONGO_URL}
+      - MONGO_DB_NAME=tictactoe
+      - NODE_OPTIONS=--max-old-space-size=128
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 192M
+        reservations:
+          memory: 96M
+
+  # nginx Reverse Proxy (HTTP only for now, add HTTPS later)
+  nginx:
+    image: nginx:stable-alpine
+    container_name: tictactoe-nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx-oracle.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - go-sockets
+      - node-api
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 32M
+        reservations:
+          memory: 16M
+
+volumes:
+  redis-data:
+    driver: local
+
+networks:
+  backend:
+    driver: bridge
