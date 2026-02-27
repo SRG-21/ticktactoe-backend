@@ -2,7 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import crypto from 'crypto';
 import redisClient from '../config/redis.js';
 
-const TOKEN_TTL = 7 * 24 * 60 * 60; // 7 days in seconds
+const TOKEN_TTL = 60 * 60; // 1 hour in seconds (data persisted to MongoDB)
 
 class AuthService {
   /**

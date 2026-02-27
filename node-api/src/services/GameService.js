@@ -110,6 +110,9 @@ class GameService {
         playerSymbols: JSON.stringify(playerSymbols),
         status: 'playing', // Game can now start
       });
+      
+      // Reset TTL - game is now active (1 hour for playing games)
+      await redisClient.expire(`game:${gameId}`, GAME_TTL);
 
       console.log(`[GAME] Player ${playerId} joined game ${gameId}`);
 

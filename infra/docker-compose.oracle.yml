@@ -96,14 +96,17 @@ services:
         reservations:
           memory: 96M
 
-  # nginx Reverse Proxy (HTTP only for now, add HTTPS later)
+  # nginx Reverse Proxy with HTTPS
   nginx:
     image: nginx:stable-alpine
     container_name: tictactoe-nginx
     ports:
       - "80:80"
+      - "443:443"
     volumes:
-      - ./nginx/nginx-oracle.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/nginx-https.conf:/etc/nginx/nginx.conf:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - /var/www/certbot:/var/www/certbot:ro
     depends_on:
       - go-sockets
       - node-api
