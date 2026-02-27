@@ -1,9 +1,11 @@
 package ws
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"log"
+	"net/http"
 	"sync"
 	"time"
 
@@ -158,9 +160,43 @@ func (m *Manager) broadcastToGame(gameID string, message []byte) {
 }
 
 func (m *Manager) persistFinishedGame(event map[string]interface{}) {
-	// This will be called by the Go server to POST to Node API
-	// For now, just log - the actual HTTP call will be in the handler
-	log.Printf("[MANAGER] Game finished, should persist: %v", event["gameId"])
+	gameID, ok := event["gameId"].(string)
+	if !ok {
+		log.Printf("[MANAGER] Cannot persist: missing gameId")
+		return
+	}
+
+	log.Printf("[MANAGER] Persisting finished game: %s", gameID)
+
+	// Prepare the request body
+	jsonData, err := json.Marshal(event)
+	if err != nil {
+		log.Printf("[MANAGER] Failed to marshal game data: %v", err)
+		return
+	}
+
+	// POST to Node API persistence endpoint
+	url := m.nodeAPIURL + "/api/persist-finished"
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	if err != nil {
+		log.Printf("[MANAGER] Failed to create request: %v", err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("[MANAGER] Failed to persist game to Node API: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated {
+		log.Printf("[MANAGER] Successfully persisted game %s to MongoDB", gameID)
+	} else {
+		log.Printf("[MANAGER] Failed to persist game %s, status: %d", gameID, resp.StatusCode)
+	}
 }
 
 // notifyGameStart broadcasts the game state to all players when second player joins
