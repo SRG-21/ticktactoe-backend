@@ -22,7 +22,11 @@ type WebSocketHandler struct {
 func NewWebSocketHandler(manager *ws.Manager, allowedOrigins []string) *WebSocketHandler {
 	// Build allowed origins map
 	originsMap := make(map[string]bool)
+	allowAll := false
 	for _, origin := range allowedOrigins {
+		if origin == "*" {
+			allowAll = true
+		}
 		originsMap[origin] = true
 	}
 
@@ -31,6 +35,11 @@ func NewWebSocketHandler(manager *ws.Manager, allowedOrigins []string) *WebSocke
 		origin := r.Header.Get("Origin")
 		if origin == "" {
 			return true // Allow same-origin requests
+		}
+
+		// Allow all origins if "*" was specified
+		if allowAll {
+			return true
 		}
 
 		allowed := originsMap[origin]
