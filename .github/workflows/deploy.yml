@@ -38,7 +38,10 @@ jobs:
             sudo docker compose -f docker-compose.oracle.yml build --no-cache
             
             echo "🔄 Restarting services..."
-            sudo docker compose -f docker-compose.oracle.yml up -d
+            sudo docker compose -f docker-compose.oracle.yml up -d --force-recreate
+            
+            echo "⏳ Waiting for services to be healthy..."
+            sleep 10
             
             echo "🧹 Cleaning up old images..."
             sudo docker image prune -f
