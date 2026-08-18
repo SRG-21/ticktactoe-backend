@@ -107,6 +107,8 @@ services:
       - ./nginx/nginx-https.conf:/etc/nginx/nginx.conf:ro
       - /etc/letsencrypt:/etc/letsencrypt:ro
       - /var/www/certbot:/var/www/certbot:ro
+    # Reload periodically so renewed certs (written by the certbot service below) get picked up
+    command: "/bin/sh -c 'while :; do sleep 6h & wait $${!}; nginx -s reload; done & nginx -g \"daemon off;\"'"
     depends_on:
       - go-sockets
       - node-api
@@ -124,6 +126,26 @@ services:
           memory: 32M
         reservations:
           memory: 16M
+
+  # Certbot - auto-renews the Let's Encrypt cert nginx reads from /etc/letsencrypt.
+  # Uses the host's cert store directly (matches nginx's mount above), not the
+  # ./certbot/conf paths used by the non-oracle docker-compose.yml.
+  certbot:
+    image: certbot/certbot
+    container_name: tictactoe-certbot
+    volumes:
+      - /etc/letsencrypt:/etc/letsencrypt
+      - /var/www/certbot:/var/www/certbot
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet; sleep 12h & wait $${!}; done;'"
+    networks:
+      - backend
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+        reservations:
+          memory: 32M
 
 volumes:
   redis-data:

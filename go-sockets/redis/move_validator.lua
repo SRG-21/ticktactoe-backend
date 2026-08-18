@@ -215,6 +215,22 @@ local moveData = string.format('{"moveId":"%s","playerId":"%s","cell":%d,"timest
     moveId, playerId, cell, timestamp)
 redis.call('RPUSH', movesKey, moveData)
 
+-- When the game finishes, pull the full move history so it can travel with the
+-- event to persistence (Mongo) BEFORE the TTL below removes it from Redis.
+local movesJson = '[]'
+if newStatus == 'finished' then
+    local movesList = redis.call('LRANGE', movesKey, 0, -1)
+    movesJson = '[' .. table.concat(movesList, ',') .. ']'
+end
+
+-- Set TTL on game keys when game finishes (1 hour = 3600 seconds)
+-- Data persisted to MongoDB, Redis just holds temporarily
+if newStatus == 'finished' then
+    redis.call('EXPIRE', gameKey, 3600)
+    redis.call('EXPIRE', movesKey, 3600)
+    redis.log(redis.LOG_NOTICE, '[MOVE_VALIDATOR] Game finished, set 1h TTL on keys')
+end
+
 -- Log final state for debugging
 redis.log(redis.LOG_NOTICE, string.format('[MOVE_VALIDATOR] Move complete: cell=%d, symbol=%s, board=%s, status=%s, result=%s, winner=%s',
     cell, playerSymbol, newBoardStr, newStatus, result, winnerPlayer))
@@ -222,7 +238,7 @@ redis.log(redis.LOG_NOTICE, string.format('[MOVE_VALIDATOR] Move complete: cell=
 -- Publish event to game channel
 local eventChannel = string.format('game:%s:events', state.gameId or string.match(gameKey, 'game:(.+)'))
 local eventPayload = string.format(
-    '{"type":"move_applied","gameId":"%s","playerId":"%s","cell":%d,"board":%s,"status":"%s","turn":"%s","result":"%s","winner":"%s","winningLine":%s}',
+    '{"type":"move_applied","gameId":"%s","playerId":"%s","cell":%d,"board":%s,"status":"%s","turn":"%s","result":"%s","winner":"%s","winningLine":%s,"moves":%s}',
     state.gameId or string.match(gameKey, 'game:(.+)'),
     playerId,
     cell,
@@ -231,7 +247,8 @@ local eventPayload = string.format(
     nextTurn,
     result,
     winnerPlayer,
-    winningLine
+    winningLine,
+    movesJson
 )
 redis.call('PUBLISH', eventChannel, eventPayload)
 
